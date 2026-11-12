@@ -1,0 +1,82 @@
+# Runs on every pull request and on pushes to develop/main.
+# Checks the Flutter app and the PHP API so broken code is caught before merging.
+# Each job skips itself until its project exists, so Stage 1 (documents only) passes.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+jobs:
+  app:
+    name: Flutter app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check if the Flutter project exists
+        id: exists
+        run: |
+          if [ -f app/pubspec.yaml ]; then echo "found=true" >> "$GITHUB_OUTPUT"
+          else echo "found=false" >> "$GITHUB_OUTPUT"; echo "No app/pubspec.yaml yet, skipping Flutter checks."; fi
+
+      - uses: subosito/flutter-action@v2
+        if: steps.exists.outputs.found == 'true'
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install packages
+        if: steps.exists.outputs.found == 'true'
+        working-directory: app
+        run: flutter pub get
+
+      - name: Format check
+        if: steps.exists.outputs.found == 'true'
+        working-directory: app
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - name: Analyze
+        if: steps.exists.outputs.found == 'true'
+        working-directory: app
+        run: flutter analyze
+
+      - name: Test
+        if: steps.exists.outputs.found == 'true'
+        working-directory: app
+        run: flutter test
+
+  api:
+    name: PHP API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check if the PHP project exists
+        id: exists
+        run: |
+          if [ -f api/composer.json ]; then echo "found=true" >> "$GITHUB_OUTPUT"
+          else echo "found=false" >> "$GITHUB_OUTPUT"; echo "No api/composer.json yet, skipping PHP checks."; fi
+
+      - uses: shivammathur/setup-php@v2
+        if: steps.exists.outputs.found == 'true'
+        with:
+          php-version: "8.2"
+          extensions: pdo_mysql
+          tools: composer
+
+      - name: Install packages
+        if: steps.exists.outputs.found == 'true'
+        working-directory: api
+        run: composer install --no-interaction --no-progress
+
+      - name: Syntax check
+        if: steps.exists.outputs.found == 'true'
+        working-directory: api
+        run: find src public routes -name "*.php" -print0 | xargs -0 -r -n1 php -l
+
+      - name: Unit tests
+        if: steps.exists.outputs.found == 'true' && hashFiles('api/phpunit.xml') != ''
+        working-directory: api
+        run: vendor/bin/phpunit
